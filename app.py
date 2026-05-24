@@ -3,7 +3,10 @@ import pickle
 
 app = Flask(__name__)
 
-# Load our trained AI model
+import os
+if not os.path.exists('model.pkl'):
+    exec(open('model.py').read())
+
 with open('model.pkl', 'rb') as f:
     model = pickle.load(f)
 
