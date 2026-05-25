@@ -11,58 +11,85 @@ HTML = '''
 <!DOCTYPE html>
 <html>
 <head>
-    <title>PhishNet</title>
+    <title>PhishNet - URL Safety Checker</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
-        body{background:#0a0a0a;color:white;font-family:Arial;text-align:center;padding:50px;}
-        h1{color:#00ff88;font-size:3em;}
-        p{color:#aaa;}
-        input{width:60%;padding:15px;font-size:1em;border-radius:10px;border:none;margin:20px;}
-        button{padding:15px 40px;background:#00ff88;color:black;font-size:1em;border:none;border-radius:10px;cursor:pointer;font-weight:bold;}
-        #result{margin-top:30px;font-size:1.5em;font-weight:bold;}
-        #details{margin-top:15px;font-size:1em;color:#aaa;}
-        .loading{color:#00ff88;}
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #0d0d0d; color: white; font-family: 'Segoe UI', Arial, sans-serif; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+        .container { width: 90%; max-width: 700px; text-align: center; padding: 40px 20px; }
+        .logo { font-size: 2.5em; font-weight: 800; color: #00ff88; letter-spacing: -1px; margin-bottom: 5px; }
+        .tagline { color: #666; font-size: 0.95em; margin-bottom: 40px; }
+        .input-box { background: #1a1a1a; border: 1px solid #333; border-radius: 12px; padding: 18px 20px; width: 100%; font-size: 1em; color: white; outline: none; margin-bottom: 15px; }
+        .input-box:focus { border-color: #00ff88; }
+        .btn { background: #00ff88; color: #000; border: none; padding: 16px 50px; border-radius: 12px; font-size: 1em; font-weight: 700; cursor: pointer; width: 100%; letter-spacing: 0.5px; }
+        .btn:hover { background: #00dd77; }
+        .result-box { margin-top: 30px; background: #1a1a1a; border-radius: 16px; padding: 30px; display: none; }
+        .status { font-size: 1.8em; font-weight: 800; margin-bottom: 20px; }
+        .score-bar-container { background: #333; border-radius: 50px; height: 10px; margin: 15px 0; overflow: hidden; }
+        .score-bar { height: 10px; border-radius: 50px; transition: width 1s ease; }
+        .score-number { font-size: 3em; font-weight: 800; margin: 10px 0; }
+        .score-label { color: #666; font-size: 0.85em; }
+        .engines { margin-top: 20px; color: #666; font-size: 0.9em; border-top: 1px solid #333; padding-top: 15px; }
+        .safe { color: #00ff88; }
+        .suspicious { color: #ffaa00; }
+        .danger { color: #ff4444; }
+        .scanning { color: #00ff88; font-size: 1em; margin-top: 20px; }
+        .powered { margin-top: 30px; color: #333; font-size: 0.75em; }
     </style>
 </head>
 <body>
-    <h1>PhishNet</h1>
-    <p>Paste any URL to check if it's safe or a scam</p>
-    <input type="text" id="url" placeholder="Paste URL here..."/>
-    <br>
-    <button onclick="checkURL()">Check Now</button>
-    <div id="result"></div>
-    <div id="details"></div>
+    <div class="container">
+        <div class="logo">PhishNet</div>
+        <div class="tagline">AI-powered phishing and malware URL detector</div>
+        <input class="input-box" type="text" id="url" placeholder="Paste any URL to check..." />
+        <button class="btn" onclick="checkURL()">Check Now</button>
+        <div id="scanning" class="scanning" style="display:none">Scanning across 70+ security engines...</div>
+        <div class="result-box" id="resultBox">
+            <div class="status" id="status"></div>
+            <div class="score-number" id="scoreNum"></div>
+            <div class="score-label">Risk Score out of 100</div>
+            <div class="score-bar-container">
+                <div class="score-bar" id="scoreBar"></div>
+            </div>
+            <div class="engines" id="engines"></div>
+        </div>
+        <div class="powered">Powered by VirusTotal Threat Intelligence</div>
+    </div>
     <script>
         function checkURL(){
-            const url=document.getElementById('url').value;
-            if(!url){return;}
-            document.getElementById('result').innerHTML='Scanning...';
-            document.getElementById('result').style.color='#00ff88';
-            document.getElementById('details').innerHTML='';
-            fetch('/check?url='+encodeURIComponent(url))
-            .then(r=>r.json())
-            .then(data=>{
-                const result=document.getElementById('result');
-                const details=document.getElementById('details');
-                if(data.result==='SAFE'){
-                    result.innerHTML='SAFE';
-                    result.style.color='#00ff88';
-                }else if(data.result==='PHISHING'){
-                    result.innerHTML='PHISHING DETECTED!';
-                    result.style.color='#ff4444';
-                }else{
-                    result.innerHTML='SUSPICIOUS';
-                    result.style.color='#ffaa00';
+            const url = document.getElementById('url').value;
+            if(!url) return;
+            document.getElementById('resultBox').style.display = 'none';
+            document.getElementById('scanning').style.display = 'block';
+            fetch('/check?url=' + encodeURIComponent(url))
+            .then(r => r.json())
+            .then(data => {
+                document.getElementById('scanning').style.display = 'none';
+                document.getElementById('resultBox').style.display = 'block';
+                const score = data.total > 0 ? Math.round((data.malicious / data.total) * 100) : 0;
+                const status = document.getElementById('status');
+                const scoreNum = document.getElementById('scoreNum');
+                const scoreBar = document.getElementById('scoreBar');
+                const engines = document.getElementById('engines');
+                scoreNum.textContent = score + '/100';
+                scoreBar.style.width = score + '%';
+                if(data.result === 'SAFE'){
+                    status.textContent = 'SAFE';
+                    status.className = 'status safe';
+                    scoreBar.style.background = '#00ff88';
+                    scoreNum.className = 'score-number safe';
+                } else if(data.result === 'SUSPICIOUS'){
+                    status.textContent = 'SUSPICIOUS';
+                    status.className = 'status suspicious';
+                    scoreBar.style.background = '#ffaa00';
+                    scoreNum.className = 'score-number suspicious';
+                } else {
+                    status.textContent = 'PHISHING DETECTED';
+                    status.className = 'status danger';
+                    scoreBar.style.background = '#ff4444';
+                    scoreNum.className = 'score-number danger';
                 }
-                const score = Math.round((data.malicious / data.total) * 100);
-const scoreColor = score < 20 ? '#00ff88' : score < 50 ? '#ffaa00' : '#ff4444';
-details.innerHTML = `
-    <div style="margin-top:20px;">
-        <div style="font-size:3em;color:${scoreColor}">${score}<span style="font-size:0.5em">/100</span></div>
-        <div style="color:#aaa;margin-top:10px;">Risk Score</div>
-        <div style="color:#aaa;margin-top:5px;">Scanned by ${data.total} security engines</div>
-        <div style="color:#aaa;margin-top:5px;">${data.malicious} engines flagged this URL</div>
-    </div>
-`;
+                engines.innerHTML = data.total + ' security engines scanned &bull; ' + data.malicious + ' flagged this URL';
             });
         }
     </script>
@@ -77,43 +104,30 @@ def home():
 @app.route('/check')
 def check():
     url = request.args.get('url', '')
-    
     try:
-        # Encode URL for VirusTotal
         url_id = base64.urlsafe_b64encode(url.encode()).decode().strip('=')
-        
         headers = {'x-apikey': VIRUSTOTAL_API_KEY}
         response = requests.get(
             f'https://www.virustotal.com/api/v3/urls/{url_id}',
             headers=headers
         )
-        
         if response.status_code == 200:
             data = response.json()
             stats = data['data']['attributes']['last_analysis_stats']
             malicious = stats.get('malicious', 0)
             total = sum(stats.values())
-            
             if malicious == 0:
                 result = 'SAFE'
             elif malicious <= 2:
                 result = 'SUSPICIOUS'
             else:
                 result = 'PHISHING'
-                
-            return jsonify({
-                'result': result,
-                'malicious': malicious,
-                'total': total
-            })
+            return jsonify({'result': result, 'malicious': malicious, 'total': total})
     except:
         pass
-    
-    # Fallback to ML model
     features = [[len(url), 1 if 'https' in url else 0,
                  1 if any(c.isdigit() for c in url.split('/')[0]) else 0,
                  url.count('.')]]
-    
     from sklearn.ensemble import RandomForestClassifier
     import pandas as pd
     data = {
