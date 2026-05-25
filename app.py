@@ -7,8 +7,6 @@ app = Flask(__name__)
 
 VIRUSTOTAL_API_KEY = os.environ.get('VT_API_KEY', '')
 
-
-
 HTML = '''
 <!DOCTYPE html>
 <html>
@@ -42,8 +40,10 @@ HTML = '''
         .scanning { color: #00ff88; font-size: 1em; margin-top: 20px; }
         .powered { margin-top: 30px; color: #333; font-size: 0.75em; }
         .user-info { background: #1a1a1a; border-radius: 12px; padding: 15px; margin-bottom: 20px; display: none; }
-        .auth-section { margin-bottom: 20px; }
-        .divider { color: #333; margin: 10px 0; }
+        .stats { display: flex; justify-content: space-around; margin-top: 10px; }
+        .stat { text-align: center; }
+        .stat-number { font-size: 1.5em; font-weight: 800; color: #00ff88; }
+        .stat-label { color: #666; font-size: 0.75em; }
     </style>
 </head>
 <body>
@@ -53,10 +53,24 @@ HTML = '''
 
         <div class="user-info" id="userInfo">
             <span id="userEmail" style="color:#00ff88;font-size:0.9em;"></span>
+            <div class="stats">
+                <div class="stat">
+                    <div class="stat-number" id="totalScans">0</div>
+                    <div class="stat-label">Total Scans</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-number" id="threatsFound" style="color:#ff4444;">0</div>
+                    <div class="stat-label">Threats Found</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-number" id="safeScans">0</div>
+                    <div class="stat-label">Safe URLs</div>
+                </div>
+            </div>
             <button class="btn btn-logout" onclick="logout()">Sign Out</button>
         </div>
 
-        <div class="auth-section" id="authSection">
+        <div id="authSection">
             <button class="btn btn-google" onclick="signInWithGoogle()">
                 <img src="https://www.google.com/favicon.ico" width="20"> Sign in with Google
             </button>
@@ -81,6 +95,7 @@ HTML = '''
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js";
         import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-auth.js";
+        import { getFirestore, collection, addDoc, query, orderBy, limit, getDocs, where, getCountFromServer } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyAIQj1JkEp0szjDZ0uQdE5QtYzIwxoPwKo",
@@ -93,30 +108,66 @@ HTML = '''
 
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
+        const db = getFirestore(app);
         const provider = new GoogleAuthProvider();
+        let currentUser = null;
 
         window.signInWithGoogle = async () => {
-            try {
-                await signInWithPopup(auth, provider);
-            } catch(e) {
-                console.error(e);
-            }
+            try { await signInWithPopup(auth, provider); }
+            catch(e) { console.error(e); }
         };
 
-        window.logout = async () => {
-            await signOut(auth);
-        };
+        window.logout = async () => { await signOut(auth); };
 
-        onAuthStateChanged(auth, (user) => {
+        onAuthStateChanged(auth, async (user) => {
+            currentUser = user;
             if(user) {
                 document.getElementById('userInfo').style.display = 'block';
                 document.getElementById('authSection').style.display = 'none';
                 document.getElementById('userEmail').textContent = 'Signed in as ' + user.email;
+                await loadUserStats();
+                await loadHistory();
             } else {
                 document.getElementById('userInfo').style.display = 'none';
                 document.getElementById('authSection').style.display = 'block';
+                document.getElementById('history').innerHTML = '';
             }
         });
+
+        async function loadUserStats() {
+            if(!currentUser) return;
+            const q = query(collection(db, 'scans'), where('uid', '==', currentUser.uid));
+            const snapshot = await getCountFromServer(q);
+            const total = snapshot.data().count;
+
+            const threatQ = query(collection(db, 'scans'), where('uid', '==', currentUser.uid), where('result', '==', 'PHISHING'));
+            const threatSnap = await getCountFromServer(threatQ);
+            const threats = threatSnap.data().count;
+
+            const safeQ = query(collection(db, 'scans'), where('uid', '==', currentUser.uid), where('result', '==', 'SAFE'));
+            const safeSnap = await getCountFromServer(safeQ);
+            const safe = safeSnap.data().count;
+
+            document.getElementById('totalScans').textContent = total;
+            document.getElementById('threatsFound').textContent = threats;
+            document.getElementById('safeScans').textContent = safe;
+        }
+
+        async function loadHistory() {
+            if(!currentUser) return;
+            const q = query(collection(db, 'scans'), where('uid', '==', currentUser.uid), orderBy('timestamp', 'desc'), limit(10));
+            const snapshot = await getDocs(q);
+            let html = '<div style="color:#666;font-size:0.85em;margin-bottom:10px;">Recent Scans</div>';
+            snapshot.forEach(doc => {
+                const h = doc.data();
+                const color = h.result==='SAFE' ? '#00ff88' : h.result==='SUSPICIOUS' ? '#ffaa00' : '#ff4444';
+                html += `<div style="background:#1a1a1a;border-radius:8px;padding:12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">
+                    <div style="color:#aaa;font-size:0.8em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%">${h.url}</div>
+                    <div style="color:${color};font-size:0.8em;font-weight:700">${h.result}</div>
+                </div>`;
+            });
+            document.getElementById('history').innerHTML = html;
+        }
 
         window.checkURL = async () => {
             const url = document.getElementById('url').value;
@@ -151,28 +202,22 @@ HTML = '''
                 scoreNum.className = 'score-number danger';
             }
             engines.innerHTML = data.total + ' security engines scanned &bull; ' + data.malicious + ' flagged this URL';
-            const history = JSON.parse(localStorage.getItem('scanHistory') || '[]');
-            history.unshift({url: url, result: data.result, score: score});
-            if(history.length > 10) history.pop();
-            localStorage.setItem('scanHistory', JSON.stringify(history));
-            updateHistory();
-        };
 
-        window.updateHistory = () => {
-            const history = JSON.parse(localStorage.getItem('scanHistory') || '[]');
-            if(history.length === 0) return;
-            let html = '<div style="color:#666;font-size:0.85em;margin-bottom:10px;">Recent Scans</div>';
-            history.forEach(h => {
-                const color = h.result==='SAFE' ? '#00ff88' : h.result==='SUSPICIOUS' ? '#ffaa00' : '#ff4444';
-                html += `<div style="background:#1a1a1a;border-radius:8px;padding:12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">
-                    <div style="color:#aaa;font-size:0.8em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%">${h.url}</div>
-                    <div style="color:${color};font-size:0.8em;font-weight:700">${h.result}</div>
-                </div>`;
-            });
-            document.getElementById('history').innerHTML = html;
+            if(currentUser) {
+                await addDoc(collection(db, 'scans'), {
+                    uid: currentUser.uid,
+                    email: currentUser.email,
+                    url: url,
+                    result: data.result,
+                    score: score,
+                    malicious: data.malicious,
+                    total: data.total,
+                    timestamp: new Date()
+                });
+                await loadUserStats();
+                await loadHistory();
+            }
         };
-
-        window.updateHistory();
     </script>
 </body>
 </html>
