@@ -6,6 +6,48 @@ import base64
 app = Flask(__name__)
 
 VIRUSTOTAL_API_KEY = os.environ.get('VT_API_KEY', '')
+GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY', '')
+
+def check_virustotal(url):
+    try:
+        url_id = base64.urlsafe_b64encode(url.encode()).decode().strip('=')
+        headers = {'x-apikey': VIRUSTOTAL_API_KEY}
+        response = requests.get(
+            f'https://www.virustotal.com/api/v3/urls/{url_id}',
+            headers=headers
+        )
+        if response.status_code == 200:
+            data = response.json()
+            stats = data['data']['attributes']['last_analysis_stats']
+            malicious = stats.get('malicious', 0)
+            total = sum(stats.values())
+            return malicious, total
+    except:
+        pass
+    return 0, 0
+
+def check_google_safe_browsing(url):
+    try:
+        payload = {
+            "client": {"clientId": "PhishNet", "clientVersion": "1.0"},
+            "threatInfo": {
+                "threatTypes": ["MALWARE", "SOCIAL_ENGINEERING", "UNWANTED_SOFTWARE", "POTENTIALLY_HARMFUL_APPLICATION"],
+                "platformTypes": ["ANY_PLATFORM"],
+                "threatEntryTypes": ["URL"],
+                "threatEntries": [{"url": url}]
+            }
+        }
+        response = requests.post(
+            f'https://safebrowsing.googleapis.com/v4/threatMatches:find?key={GOOGLE_API_KEY}',
+            json=payload
+        )
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('matches'):
+                return True
+    except:
+        pass
+    return False
 
 HTML = '''
 <!DOCTYPE html>
@@ -44,6 +86,7 @@ HTML = '''
         .stat { text-align: center; }
         .stat-number { font-size: 1.5em; font-weight: 800; color: #00ff88; }
         .stat-label { color: #666; font-size: 0.75em; }
+        .google-flag { color: #ff4444; font-size: 0.85em; margin-top: 5px; }
     </style>
 </head>
 <body>
@@ -78,7 +121,7 @@ HTML = '''
 
         <input class="input-box" type="text" id="url" placeholder="Paste any URL to check..." />
         <button class="btn" onclick="checkURL()">Check Now</button>
-        <div id="scanning" class="scanning" style="display:none">Scanning across 70+ security engines...</div>
+        <div id="scanning" class="scanning" style="display:none">Scanning across 70+ security engines + Google Safe Browsing...</div>
         <div class="result-box" id="resultBox">
             <div class="status" id="status"></div>
             <div class="score-number" id="scoreNum"></div>
@@ -87,9 +130,11 @@ HTML = '''
                 <div class="score-bar" id="scoreBar"></div>
             </div>
             <div class="engines" id="engines"></div>
+            <div class="google-flag" id="googleFlag"></div>
+            <div style="margin-top:10px;color:#333;font-size:0.75em;">Sources: VirusTotal + Google Safe Browsing</div>
         </div>
         <div id="history" style="margin-top:30px;text-align:left;"></div>
-        <div class="powered">Powered by VirusTotal Threat Intelligence</div>
+        <div class="powered">Powered by VirusTotal + Google Safe Browsing</div>
     </div>
 
     <script type="module">
@@ -139,15 +184,12 @@ HTML = '''
             const q = query(collection(db, 'scans'), where('uid', '==', currentUser.uid));
             const snapshot = await getCountFromServer(q);
             const total = snapshot.data().count;
-
             const threatQ = query(collection(db, 'scans'), where('uid', '==', currentUser.uid), where('result', '==', 'PHISHING'));
             const threatSnap = await getCountFromServer(threatQ);
             const threats = threatSnap.data().count;
-
             const safeQ = query(collection(db, 'scans'), where('uid', '==', currentUser.uid), where('result', '==', 'SAFE'));
             const safeSnap = await getCountFromServer(safeQ);
             const safe = safeSnap.data().count;
-
             document.getElementById('totalScans').textContent = total;
             document.getElementById('threatsFound').textContent = threats;
             document.getElementById('safeScans').textContent = safe;
@@ -174,14 +216,11 @@ HTML = '''
         window.checkURL = async () => {
             const url = document.getElementById('url').value;
             if(!url) return;
-
-            // URL Validation
             const urlPattern = /^(https?:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w \.-]*)*\/?$/;
             if(!urlPattern.test(url)) {
                 alert('Please enter a valid URL');
                 return;
             }
-
             document.getElementById('resultBox').style.display = 'none';
             document.getElementById('scanning').style.display = 'block';
             const response = await fetch('/check?url=' + encodeURIComponent(url));
@@ -193,15 +232,22 @@ HTML = '''
             const scoreNum = document.getElementById('scoreNum');
             const scoreBar = document.getElementById('scoreBar');
             const engines = document.getElementById('engines');
+            const googleFlag = document.getElementById('googleFlag');
             scoreNum.textContent = score + '/100';
             scoreBar.style.width = score + '%';
 
-            if(score === 0){
+            if(data.google_flagged) {
+                googleFlag.textContent = 'Flagged by Google Safe Browsing';
+            } else {
+                googleFlag.textContent = '';
+            }
+
+            if(score === 0 && !data.google_flagged){
                 status.textContent = 'SAFE';
                 status.className = 'status safe';
                 scoreBar.style.background = '#00ff88';
                 scoreNum.className = 'score-number safe';
-            } else if(score <= 20){
+            } else if(score <= 20 && !data.google_flagged){
                 status.textContent = 'SUSPICIOUS';
                 status.className = 'status suspicious';
                 scoreBar.style.background = '#ffaa00';
@@ -216,13 +262,14 @@ HTML = '''
             engines.innerHTML = data.total + ' security engines scanned &bull; ' + data.malicious + ' flagged this URL';
 
             if(currentUser) {
-                const result = score === 0 ? 'SAFE' : score <= 20 ? 'SUSPICIOUS' : 'PHISHING';
+                const result = (score === 0 && !data.google_flagged) ? 'SAFE' : (score <= 20 && !data.google_flagged) ? 'SUSPICIOUS' : 'PHISHING';
                 await addDoc(collection(db, 'scans'), {
                     uid: currentUser.uid,
                     email: currentUser.email,
                     url: url,
                     result: result,
                     score: score,
+                    google_flagged: data.google_flagged,
                     malicious: data.malicious,
                     total: data.total,
                     timestamp: new Date()
@@ -243,44 +290,20 @@ def home():
 @app.route('/check')
 def check():
     url = request.args.get('url', '')
-    try:
-        url_id = base64.urlsafe_b64encode(url.encode()).decode().strip('=')
-        headers = {'x-apikey': VIRUSTOTAL_API_KEY}
-        response = requests.get(
-            f'https://www.virustotal.com/api/v3/urls/{url_id}',
-            headers=headers
-        )
-        if response.status_code == 200:
-            data = response.json()
-            stats = data['data']['attributes']['last_analysis_stats']
-            malicious = stats.get('malicious', 0)
-            total = sum(stats.values())
-            if malicious == 0:
-                result = 'SAFE'
-            elif malicious <= 2:
-                result = 'SUSPICIOUS'
-            else:
-                result = 'PHISHING'
-            return jsonify({'result': result, 'malicious': malicious, 'total': total})
-    except:
-        pass
-    features = [[len(url), 1 if 'https' in url else 0,
-                 1 if any(c.isdigit() for c in url.split('/')[0]) else 0,
-                 url.count('.')]]
-    from sklearn.ensemble import RandomForestClassifier
-    import pandas as pd
-    data = {
-        'url_length': [20,100,25,150,30,200,22,180,15,120,28,160,35,190,18,170,24,140,32,210],
-        'has_https': [1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0],
-        'has_ip': [0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1],
-        'num_dots': [1,5,2,8,1,7,2,6,1,9,2,7,1,8,2,6,1,7,2,9],
-        'label': [0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1]
-    }
-    df = pd.DataFrame(data)
-    model = RandomForestClassifier()
-    model.fit(df.drop('label',axis=1), df['label'])
-    prediction = model.predict(features)[0]
-    return jsonify({'result': 'SAFE' if prediction==0 else 'PHISHING', 'malicious': 0, 'total': 0})
+    malicious, total = check_virustotal(url)
+    google_flagged = check_google_safe_browsing(url)
+    if malicious == 0 and not google_flagged:
+        result = 'SAFE'
+    elif malicious <= 2 and not google_flagged:
+        result = 'SUSPICIOUS'
+    else:
+        result = 'PHISHING'
+    return jsonify({
+        'result': result,
+        'malicious': malicious,
+        'total': total,
+        'google_flagged': google_flagged
+    })
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
