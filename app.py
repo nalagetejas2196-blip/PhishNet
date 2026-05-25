@@ -157,12 +157,14 @@ HTML = '''
             if(!currentUser) return;
             const q = query(collection(db, 'scans'), where('uid', '==', currentUser.uid), orderBy('timestamp', 'desc'), limit(10));
             const snapshot = await getDocs(q);
+            if(snapshot.empty) return;
             let html = '<div style="color:#666;font-size:0.85em;margin-bottom:10px;">Recent Scans</div>';
             snapshot.forEach(doc => {
                 const h = doc.data();
                 const color = h.result==='SAFE' ? '#00ff88' : h.result==='SUSPICIOUS' ? '#ffaa00' : '#ff4444';
+                const defanged = h.url.replace('http://', 'hxxp://').replace('https://', 'hxxps://');
                 html += `<div style="background:#1a1a1a;border-radius:8px;padding:12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">
-                    <div style="color:#aaa;font-size:0.8em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%">${h.url}</div>
+                    <div style="color:#aaa;font-size:0.8em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%">${defanged}</div>
                     <div style="color:${color};font-size:0.8em;font-weight:700">${h.result}</div>
                 </div>`;
             });
@@ -172,6 +174,14 @@ HTML = '''
         window.checkURL = async () => {
             const url = document.getElementById('url').value;
             if(!url) return;
+
+            // URL Validation
+            const urlPattern = /^(https?:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w \.-]*)*\/?$/;
+            if(!urlPattern.test(url)) {
+                alert('Please enter a valid URL');
+                return;
+            }
+
             document.getElementById('resultBox').style.display = 'none';
             document.getElementById('scanning').style.display = 'block';
             const response = await fetch('/check?url=' + encodeURIComponent(url));
@@ -185,12 +195,13 @@ HTML = '''
             const engines = document.getElementById('engines');
             scoreNum.textContent = score + '/100';
             scoreBar.style.width = score + '%';
-            if(data.result === 'SAFE'){
+
+            if(score === 0){
                 status.textContent = 'SAFE';
                 status.className = 'status safe';
                 scoreBar.style.background = '#00ff88';
                 scoreNum.className = 'score-number safe';
-            } else if(data.result === 'SUSPICIOUS'){
+            } else if(score <= 20){
                 status.textContent = 'SUSPICIOUS';
                 status.className = 'status suspicious';
                 scoreBar.style.background = '#ffaa00';
@@ -201,14 +212,16 @@ HTML = '''
                 scoreBar.style.background = '#ff4444';
                 scoreNum.className = 'score-number danger';
             }
+
             engines.innerHTML = data.total + ' security engines scanned &bull; ' + data.malicious + ' flagged this URL';
 
             if(currentUser) {
+                const result = score === 0 ? 'SAFE' : score <= 20 ? 'SUSPICIOUS' : 'PHISHING';
                 await addDoc(collection(db, 'scans'), {
                     uid: currentUser.uid,
                     email: currentUser.email,
                     url: url,
-                    result: data.result,
+                    result: result,
                     score: score,
                     malicious: data.malicious,
                     total: data.total,
