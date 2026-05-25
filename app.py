@@ -7,6 +7,15 @@ app = Flask(__name__)
 
 VIRUSTOTAL_API_KEY = os.environ.get('VT_API_KEY', '')
 
+FIREBASE_CONFIG = {
+    "apiKey": "AIzaSyAIQj1JkEp0szjDZ0uQdE5QtYzIwxoPwKo",
+    "authDomain": "phishnet-828f8.firebaseapp.com",
+    "projectId": "phishnet-828f8",
+    "storageBucket": "phishnet-828f8.firebasestorage.app",
+    "messagingSenderId": "931810127259",
+    "appId": "1:931810127259:web:cd10d1c0f15a1257ce453e"
+}
+
 HTML = '''
 <!DOCTYPE html>
 <html>
@@ -21,8 +30,12 @@ HTML = '''
         .tagline { color: #666; font-size: 0.95em; margin-bottom: 40px; }
         .input-box { background: #1a1a1a; border: 1px solid #333; border-radius: 12px; padding: 18px 20px; width: 100%; font-size: 1em; color: white; outline: none; margin-bottom: 15px; }
         .input-box:focus { border-color: #00ff88; }
-        .btn { background: #00ff88; color: #000; border: none; padding: 16px 50px; border-radius: 12px; font-size: 1em; font-weight: 700; cursor: pointer; width: 100%; letter-spacing: 0.5px; }
+        .btn { background: #00ff88; color: #000; border: none; padding: 16px 50px; border-radius: 12px; font-size: 1em; font-weight: 700; cursor: pointer; width: 100%; letter-spacing: 0.5px; margin-bottom: 10px; }
         .btn:hover { background: #00dd77; }
+        .btn-google { background: white; color: #333; display: flex; align-items: center; justify-content: center; gap: 10px; }
+        .btn-google:hover { background: #f5f5f5; }
+        .btn-logout { background: #333; color: white; margin-top: 10px; }
+        .btn-logout:hover { background: #444; }
         .result-box { margin-top: 30px; background: #1a1a1a; border-radius: 16px; padding: 30px; display: none; }
         .status { font-size: 1.8em; font-weight: 800; margin-bottom: 20px; }
         .score-bar-container { background: #333; border-radius: 50px; height: 10px; margin: 15px 0; overflow: hidden; }
@@ -35,12 +48,27 @@ HTML = '''
         .danger { color: #ff4444; }
         .scanning { color: #00ff88; font-size: 1em; margin-top: 20px; }
         .powered { margin-top: 30px; color: #333; font-size: 0.75em; }
+        .user-info { background: #1a1a1a; border-radius: 12px; padding: 15px; margin-bottom: 20px; display: none; }
+        .auth-section { margin-bottom: 20px; }
+        .divider { color: #333; margin: 10px 0; }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="logo">PhishNet</div>
         <div class="tagline">AI-powered phishing and malware URL detector</div>
+
+        <div class="user-info" id="userInfo">
+            <span id="userEmail" style="color:#00ff88;font-size:0.9em;"></span>
+            <button class="btn btn-logout" onclick="logout()">Sign Out</button>
+        </div>
+
+        <div class="auth-section" id="authSection">
+            <button class="btn btn-google" onclick="signInWithGoogle()">
+                <img src="https://www.google.com/favicon.ico" width="20"> Sign in with Google
+            </button>
+        </div>
+
         <input class="input-box" type="text" id="url" placeholder="Paste any URL to check..." />
         <button class="btn" onclick="checkURL()">Check Now</button>
         <div id="scanning" class="scanning" style="display:none">Scanning across 70+ security engines...</div>
@@ -53,66 +81,105 @@ HTML = '''
             </div>
             <div class="engines" id="engines"></div>
         </div>
-        <div class="powered">Powered by VirusTotal Threat Intelligence</div>
         <div id="history" style="margin-top:30px;text-align:left;"></div>
+        <div class="powered">Powered by VirusTotal Threat Intelligence</div>
     </div>
-    <script>
-        function checkURL(){
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js";
+        import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-auth.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyAIQj1JkEp0szjDZ0uQdE5QtYzIwxoPwKo",
+            authDomain: "phishnet-828f8.firebaseapp.com",
+            projectId: "phishnet-828f8",
+            storageBucket: "phishnet-828f8.firebasestorage.app",
+            messagingSenderId: "931810127259",
+            appId: "1:931810127259:web:cd10d1c0f15a1257ce453e"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const provider = new GoogleAuthProvider();
+
+        window.signInWithGoogle = async () => {
+            try {
+                await signInWithPopup(auth, provider);
+            } catch(e) {
+                console.error(e);
+            }
+        };
+
+        window.logout = async () => {
+            await signOut(auth);
+        };
+
+        onAuthStateChanged(auth, (user) => {
+            if(user) {
+                document.getElementById('userInfo').style.display = 'block';
+                document.getElementById('authSection').style.display = 'none';
+                document.getElementById('userEmail').textContent = 'Signed in as ' + user.email;
+            } else {
+                document.getElementById('userInfo').style.display = 'none';
+                document.getElementById('authSection').style.display = 'block';
+            }
+        });
+
+        window.checkURL = async () => {
             const url = document.getElementById('url').value;
             if(!url) return;
             document.getElementById('resultBox').style.display = 'none';
             document.getElementById('scanning').style.display = 'block';
-            fetch('/check?url=' + encodeURIComponent(url))
-            .then(r => r.json())
-            .then(data => {
-                document.getElementById('scanning').style.display = 'none';
-                document.getElementById('resultBox').style.display = 'block';
-                const score = data.total > 0 ? Math.round((data.malicious / data.total) * 100) : 0;
-                const status = document.getElementById('status');
-                const scoreNum = document.getElementById('scoreNum');
-                const scoreBar = document.getElementById('scoreBar');
-                const engines = document.getElementById('engines');
-                scoreNum.textContent = score + '/100';
-                scoreBar.style.width = score + '%';
-                if(data.result === 'SAFE'){
-                    status.textContent = 'SAFE';
-                    status.className = 'status safe';
-                    scoreBar.style.background = '#00ff88';
-                    scoreNum.className = 'score-number safe';
-                } else if(data.result === 'SUSPICIOUS'){
-                    status.textContent = 'SUSPICIOUS';
-                    status.className = 'status suspicious';
-                    scoreBar.style.background = '#ffaa00';
-                    scoreNum.className = 'score-number suspicious';
-                } else {
-                    status.textContent = 'PHISHING DETECTED';
-                    status.className = 'status danger';
-                    scoreBar.style.background = '#ff4444';
-                    scoreNum.className = 'score-number danger';
-                }
-                engines.innerHTML = data.total + ' security engines scanned &bull; ' + data.malicious + ' flagged this URL';
-                // Add to history
-const history = JSON.parse(localStorage.getItem('scanHistory') || '[]');
-history.unshift({url: url, result: data.result, score: score, time: new Date().toLocaleTimeString()});
-if(history.length > 10) history.pop();
-localStorage.setItem('scanHistory', JSON.stringify(history));
-updateHistory();
+            const response = await fetch('/check?url=' + encodeURIComponent(url));
+            const data = await response.json();
+            document.getElementById('scanning').style.display = 'none';
+            document.getElementById('resultBox').style.display = 'block';
+            const score = data.total > 0 ? Math.round((data.malicious / data.total) * 100) : 0;
+            const status = document.getElementById('status');
+            const scoreNum = document.getElementById('scoreNum');
+            const scoreBar = document.getElementById('scoreBar');
+            const engines = document.getElementById('engines');
+            scoreNum.textContent = score + '/100';
+            scoreBar.style.width = score + '%';
+            if(data.result === 'SAFE'){
+                status.textContent = 'SAFE';
+                status.className = 'status safe';
+                scoreBar.style.background = '#00ff88';
+                scoreNum.className = 'score-number safe';
+            } else if(data.result === 'SUSPICIOUS'){
+                status.textContent = 'SUSPICIOUS';
+                status.className = 'status suspicious';
+                scoreBar.style.background = '#ffaa00';
+                scoreNum.className = 'score-number suspicious';
+            } else {
+                status.textContent = 'PHISHING DETECTED';
+                status.className = 'status danger';
+                scoreBar.style.background = '#ff4444';
+                scoreNum.className = 'score-number danger';
+            }
+            engines.innerHTML = data.total + ' security engines scanned &bull; ' + data.malicious + ' flagged this URL';
+            const history = JSON.parse(localStorage.getItem('scanHistory') || '[]');
+            history.unshift({url: url, result: data.result, score: score});
+            if(history.length > 10) history.pop();
+            localStorage.setItem('scanHistory', JSON.stringify(history));
+            updateHistory();
+        };
+
+        window.updateHistory = () => {
+            const history = JSON.parse(localStorage.getItem('scanHistory') || '[]');
+            if(history.length === 0) return;
+            let html = '<div style="color:#666;font-size:0.85em;margin-bottom:10px;">Recent Scans</div>';
+            history.forEach(h => {
+                const color = h.result==='SAFE' ? '#00ff88' : h.result==='SUSPICIOUS' ? '#ffaa00' : '#ff4444';
+                html += `<div style="background:#1a1a1a;border-radius:8px;padding:12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">
+                    <div style="color:#aaa;font-size:0.8em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%">${h.url}</div>
+                    <div style="color:${color};font-size:0.8em;font-weight:700">${h.result}</div>
+                </div>`;
             });
-        }
-        function updateHistory(){
-    const history = JSON.parse(localStorage.getItem('scanHistory') || '[]');
-    if(history.length === 0) return;
-    let html = '<div style="color:#666;font-size:0.85em;margin-bottom:10px;">Recent Scans</div>';
-    history.forEach(h => {
-        const color = h.result==='SAFE' ? '#00ff88' : h.result==='SUSPICIOUS' ? '#ffaa00' : '#ff4444';
-        html += `<div style="background:#1a1a1a;border-radius:8px;padding:12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">
-            <div style="color:#aaa;font-size:0.8em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%">${h.url}</div>
-            <div style="color:${color};font-size:0.8em;font-weight:700">${h.result}</div>
-        </div>`;
-    });
-    document.getElementById('history').innerHTML = html;
-}
-updateHistory();
+            document.getElementById('history').innerHTML = html;
+        };
+
+        window.updateHistory();
     </script>
 </body>
 </html>
