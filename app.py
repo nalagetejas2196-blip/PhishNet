@@ -5,7 +5,7 @@ import base64
 
 app = Flask(__name__)
 
-VIRUSTOTAL_API_KEY = os.environ.get('VT_API_KEY', '592cc185c5faa6f2de202d65e76bb098aa673da1cf52eabf180dc8ba78cfc19e')
+VIRUSTOTAL_API_KEY = os.environ.get('VT_API_KEY', '')
 
 HTML = '''
 <!DOCTYPE html>
