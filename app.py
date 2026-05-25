@@ -7,14 +7,7 @@ app = Flask(__name__)
 
 VIRUSTOTAL_API_KEY = os.environ.get('VT_API_KEY', '')
 
-FIREBASE_CONFIG = {
-    "apiKey": "AIzaSyAIQj1JkEp0szjDZ0uQdE5QtYzIwxoPwKo",
-    "authDomain": "phishnet-828f8.firebaseapp.com",
-    "projectId": "phishnet-828f8",
-    "storageBucket": "phishnet-828f8.firebasestorage.app",
-    "messagingSenderId": "931810127259",
-    "appId": "1:931810127259:web:cd10d1c0f15a1257ce453e"
-}
+
 
 HTML = '''
 <!DOCTYPE html>
