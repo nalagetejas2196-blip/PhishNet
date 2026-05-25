@@ -53,7 +53,16 @@ HTML = '''
                     result.innerHTML='SUSPICIOUS';
                     result.style.color='#ffaa00';
                 }
-                details.innerHTML='Engines detected: '+data.malicious+' / '+data.total;
+                const score = Math.round((data.malicious / data.total) * 100);
+const scoreColor = score < 20 ? '#00ff88' : score < 50 ? '#ffaa00' : '#ff4444';
+details.innerHTML = `
+    <div style="margin-top:20px;">
+        <div style="font-size:3em;color:${scoreColor}">${score}<span style="font-size:0.5em">/100</span></div>
+        <div style="color:#aaa;margin-top:10px;">Risk Score</div>
+        <div style="color:#aaa;margin-top:5px;">Scanned by ${data.total} security engines</div>
+        <div style="color:#aaa;margin-top:5px;">${data.malicious} engines flagged this URL</div>
+    </div>
+`;
             });
         }
     </script>
