@@ -54,6 +54,7 @@ HTML = '''
             <div class="engines" id="engines"></div>
         </div>
         <div class="powered">Powered by VirusTotal Threat Intelligence</div>
+        <div id="history" style="margin-top:30px;text-align:left;"></div>
     </div>
     <script>
         function checkURL(){
@@ -90,8 +91,28 @@ HTML = '''
                     scoreNum.className = 'score-number danger';
                 }
                 engines.innerHTML = data.total + ' security engines scanned &bull; ' + data.malicious + ' flagged this URL';
+                // Add to history
+const history = JSON.parse(localStorage.getItem('scanHistory') || '[]');
+history.unshift({url: url, result: data.result, score: score, time: new Date().toLocaleTimeString()});
+if(history.length > 10) history.pop();
+localStorage.setItem('scanHistory', JSON.stringify(history));
+updateHistory();
             });
         }
+        function updateHistory(){
+    const history = JSON.parse(localStorage.getItem('scanHistory') || '[]');
+    if(history.length === 0) return;
+    let html = '<div style="color:#666;font-size:0.85em;margin-bottom:10px;">Recent Scans</div>';
+    history.forEach(h => {
+        const color = h.result==='SAFE' ? '#00ff88' : h.result==='SUSPICIOUS' ? '#ffaa00' : '#ff4444';
+        html += `<div style="background:#1a1a1a;border-radius:8px;padding:12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">
+            <div style="color:#aaa;font-size:0.8em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%">${h.url}</div>
+            <div style="color:${color};font-size:0.8em;font-weight:700">${h.result}</div>
+        </div>`;
+    });
+    document.getElementById('history').innerHTML = html;
+}
+updateHistory();
     </script>
 </body>
 </html>
