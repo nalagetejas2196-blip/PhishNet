@@ -2,11 +2,25 @@ from flask import Flask, request, jsonify, render_template_string
 import os
 import requests
 import base64
+import re
 
 app = Flask(__name__)
 
 VIRUSTOTAL_API_KEY = os.environ.get('VT_API_KEY', '')
 GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY', '')
+
+SCAM_KEYWORDS = [
+    'pay now', 'urgent', 'winner', 'won', 'prize', 'lottery', 'free money',
+    'click here', 'verify account', 'suspended', 'blocked', 'otp',
+    'registration fee', 'pay fee', 'selected for internship', 'job offer',
+    'work from home', 'earn money', 'congratulations', 'you have been selected',
+    'claim now', 'kyc update', 'upi', 'send money', 'transfer money',
+    'bitcoin', 'crypto', 'double your money', 'guaranteed returns'
+]
+
+def extract_urls(text):
+    pattern = r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
+    return re.findall(pattern, text)
 
 def check_virustotal(url):
     try:
@@ -48,7 +62,6 @@ def check_google_safe_browsing(url):
     except:
         pass
     return False
-
 HTML = '''
 <!DOCTYPE html>
 <html>
@@ -60,15 +73,18 @@ HTML = '''
         body { background: #0d0d0d; color: white; font-family: 'Segoe UI', Arial, sans-serif; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
         .container { width: 90%; max-width: 700px; text-align: center; padding: 40px 20px; }
         .logo { font-size: 2.5em; font-weight: 800; color: #00ff88; letter-spacing: -1px; margin-bottom: 5px; }
-        .tagline { color: #666; font-size: 0.95em; margin-bottom: 40px; }
+        .tagline { color: #666; font-size: 0.95em; margin-bottom: 20px; }
+        .tab-bar { display: flex; gap: 10px; margin-bottom: 20px; }
+        .tab { flex: 1; padding: 12px; border-radius: 10px; border: 1px solid #333; background: #1a1a1a; color: #666; cursor: pointer; font-size: 0.9em; font-weight: 600; }
+        .tab.active { border-color: #00ff88; color: #00ff88; }
         .input-box { background: #1a1a1a; border: 1px solid #333; border-radius: 12px; padding: 18px 20px; width: 100%; font-size: 1em; color: white; outline: none; margin-bottom: 15px; }
         .input-box:focus { border-color: #00ff88; }
+        textarea.input-box { height: 150px; resize: vertical; font-family: inherit; }
         .btn { background: #00ff88; color: #000; border: none; padding: 16px 50px; border-radius: 12px; font-size: 1em; font-weight: 700; cursor: pointer; width: 100%; letter-spacing: 0.5px; margin-bottom: 10px; }
         .btn:hover { background: #00dd77; }
         .btn-google { background: white; color: #333; display: flex; align-items: center; justify-content: center; gap: 10px; }
         .btn-google:hover { background: #f5f5f5; }
         .btn-logout { background: #333; color: white; margin-top: 10px; }
-        .btn-logout:hover { background: #444; }
         .result-box { margin-top: 30px; background: #1a1a1a; border-radius: 16px; padding: 30px; display: none; }
         .status { font-size: 1.8em; font-weight: 800; margin-bottom: 20px; }
         .score-bar-container { background: #333; border-radius: 50px; height: 10px; margin: 15px 0; overflow: hidden; }
@@ -83,17 +99,18 @@ HTML = '''
         .powered { margin-top: 30px; color: #333; font-size: 0.75em; }
         .user-info { background: #1a1a1a; border-radius: 12px; padding: 15px; margin-bottom: 20px; display: none; }
         .stats { display: flex; justify-content: space-around; margin-top: 10px; }
-        .stat { text-align: center; }
         .stat-number { font-size: 1.5em; font-weight: 800; color: #00ff88; }
         .stat-label { color: #666; font-size: 0.75em; }
         .google-flag { color: #ff4444; font-size: 0.85em; margin-top: 5px; }
+        .keyword-tag { display: inline-block; background: #ff444422; color: #ff4444; border: 1px solid #ff4444; border-radius: 20px; padding: 4px 12px; margin: 4px; font-size: 0.8em; }
+        .url-result { background: #0d0d0d; border-radius: 8px; padding: 12px; margin: 8px 0; text-align: left; }
+        .message-verdict { font-size: 1.5em; font-weight: 800; margin-bottom: 15px; }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="logo">PhishNet</div>
-        <div class="tagline">AI-powered phishing and malware URL detector</div>
-
+        <div class="tagline">AI-powered phishing and malware detector</div>
         <div class="user-info" id="userInfo">
             <span id="userEmail" style="color:#00ff88;font-size:0.9em;"></span>
             <div class="stats">
@@ -112,31 +129,46 @@ HTML = '''
             </div>
             <button class="btn btn-logout" onclick="logout()">Sign Out</button>
         </div>
-
         <div id="authSection">
             <button class="btn btn-google" onclick="signInWithGoogle()">
                 <img src="https://www.google.com/favicon.ico" width="20"> Sign in with Google
             </button>
         </div>
-
-        <input class="input-box" type="text" id="url" placeholder="Paste any URL to check..." />
-        <button class="btn" onclick="checkURL()">Check Now</button>
-        <div id="scanning" class="scanning" style="display:none">Scanning across 70+ security engines + Google Safe Browsing...</div>
-        <div class="result-box" id="resultBox">
-            <div class="status" id="status"></div>
-            <div class="score-number" id="scoreNum"></div>
-            <div class="score-label">Risk Score out of 100</div>
-            <div class="score-bar-container">
-                <div class="score-bar" id="scoreBar"></div>
+        <div class="tab-bar">
+            <div class="tab active" id="tab-url" onclick="switchTab('url')">URL Checker</div>
+            <div class="tab" id="tab-message" onclick="switchTab('message')">Message Scanner</div>
+        </div>
+        <div id="url-section">
+            <input class="input-box" type="text" id="url" placeholder="Paste any URL to check..." />
+            <button class="btn" onclick="checkURL()">Check Now</button>
+            <div id="scanning" class="scanning" style="display:none">Scanning across 70+ security engines + Google Safe Browsing...</div>
+            <div class="result-box" id="resultBox">
+                <div class="status" id="status"></div>
+                <div class="score-number" id="scoreNum"></div>
+                <div class="score-label">Risk Score out of 100</div>
+                <div class="score-bar-container">
+                    <div class="score-bar" id="scoreBar"></div>
+                </div>
+                <div class="engines" id="engines"></div>
+                <div class="google-flag" id="googleFlag"></div>
+                <div style="margin-top:10px;color:#333;font-size:0.75em;">Sources: VirusTotal + Google Safe Browsing</div>
             </div>
-            <div class="engines" id="engines"></div>
-            <div class="google-flag" id="googleFlag"></div>
-            <div style="margin-top:10px;color:#333;font-size:0.75em;">Sources: VirusTotal + Google Safe Browsing</div>
+        </div>
+        <div id="message-section" style="display:none">
+            <textarea class="input-box" id="message" placeholder="Paste your WhatsApp message or email here..."></textarea>
+            <button class="btn" onclick="checkMessage()">Scan Message</button>
+            <div id="msg-scanning" class="scanning" style="display:none">Analyzing message...</div>
+            <div class="result-box" id="msgResultBox">
+                <div class="message-verdict" id="msgVerdict"></div>
+                <div id="msgKeywords"></div>
+                <div id="msgUrls"></div>
+            </div>
         </div>
         <div id="history" style="margin-top:30px;text-align:left;"></div>
         <div class="powered">Powered by VirusTotal + Google Safe Browsing</div>
     </div>
-
+'''
+HTML += '''
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js";
         import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-auth.js";
@@ -156,6 +188,13 @@ HTML = '''
         const db = getFirestore(app);
         const provider = new GoogleAuthProvider();
         let currentUser = null;
+
+        window.switchTab = (tab) => {
+            document.getElementById('url-section').style.display = tab === 'url' ? 'block' : 'none';
+            document.getElementById('message-section').style.display = tab === 'message' ? 'block' : 'none';
+            document.getElementById('tab-url').className = 'tab' + (tab === 'url' ? ' active' : '');
+            document.getElementById('tab-message').className = 'tab' + (tab === 'message' ? ' active' : '');
+        };
 
         window.signInWithGoogle = async () => {
             try { await signInWithPopup(auth, provider); }
@@ -204,7 +243,7 @@ HTML = '''
             snapshot.forEach(doc => {
                 const h = doc.data();
                 const color = h.result==='SAFE' ? '#00ff88' : h.result==='SUSPICIOUS' ? '#ffaa00' : '#ff4444';
-                const defanged = h.url.replace('http://', 'hxxp://').replace('https://', 'hxxps://');
+                const defanged = h.url ? h.url.replace('http://', 'hxxp://').replace('https://', 'hxxps://') : 'Message scan';
                 html += `<div style="background:#1a1a1a;border-radius:8px;padding:12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">
                     <div style="color:#aaa;font-size:0.8em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%">${defanged}</div>
                     <div style="color:${color};font-size:0.8em;font-weight:700">${h.result}</div>
@@ -235,13 +274,7 @@ HTML = '''
             const googleFlag = document.getElementById('googleFlag');
             scoreNum.textContent = score + '/100';
             scoreBar.style.width = score + '%';
-
-            if(data.google_flagged) {
-                googleFlag.textContent = 'Flagged by Google Safe Browsing';
-            } else {
-                googleFlag.textContent = '';
-            }
-
+            googleFlag.textContent = data.google_flagged ? 'Flagged by Google Safe Browsing' : '';
             if(score === 0 && !data.google_flagged){
                 status.textContent = 'SAFE';
                 status.className = 'status safe';
@@ -258,9 +291,7 @@ HTML = '''
                 scoreBar.style.background = '#ff4444';
                 scoreNum.className = 'score-number danger';
             }
-
             engines.innerHTML = data.total + ' security engines scanned &bull; ' + data.malicious + ' flagged this URL';
-
             if(currentUser) {
                 const result = (score === 0 && !data.google_flagged) ? 'SAFE' : (score <= 20 && !data.google_flagged) ? 'SUSPICIOUS' : 'PHISHING';
                 await addDoc(collection(db, 'scans'), {
@@ -272,6 +303,65 @@ HTML = '''
                     google_flagged: data.google_flagged,
                     malicious: data.malicious,
                     total: data.total,
+                    timestamp: new Date()
+                });
+                await loadUserStats();
+                await loadHistory();
+            }
+        };
+
+        window.checkMessage = async () => {
+            const message = document.getElementById('message').value;
+            if(!message) return;
+            document.getElementById('msgResultBox').style.display = 'none';
+            document.getElementById('msg-scanning').style.display = 'block';
+            const response = await fetch('/check-message', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({message: message})
+            });
+            const data = await response.json();
+            document.getElementById('msg-scanning').style.display = 'none';
+            document.getElementById('msgResultBox').style.display = 'block';
+            const verdict = document.getElementById('msgVerdict');
+            if(data.is_scam) {
+                verdict.textContent = 'SCAM DETECTED';
+                verdict.className = 'message-verdict danger';
+            } else {
+                verdict.textContent = 'MESSAGE LOOKS SAFE';
+                verdict.className = 'message-verdict safe';
+            }
+            let keywordsHtml = '';
+            if(data.found_keywords.length > 0) {
+                keywordsHtml = '<div style="margin-top:15px;"><div style="color:#666;font-size:0.85em;margin-bottom:8px;">Suspicious Keywords Found:</div>';
+                data.found_keywords.forEach(k => {
+                    keywordsHtml += `<span class="keyword-tag">${k}</span>`;
+                });
+                keywordsHtml += '</div>';
+            }
+            document.getElementById('msgKeywords').innerHTML = keywordsHtml;
+            let urlsHtml = '';
+            if(data.urls.length > 0) {
+                urlsHtml = '<div style="margin-top:15px;"><div style="color:#666;font-size:0.85em;margin-bottom:8px;">URLs Found in Message:</div>';
+                data.urls.forEach(u => {
+                    const color = u.safe ? '#00ff88' : '#ff4444';
+                    const label = u.safe ? 'SAFE' : 'DANGEROUS';
+                    const defanged = u.url.replace('http://', 'hxxp://').replace('https://', 'hxxps://');
+                    urlsHtml += `<div class="url-result">
+                        <div style="color:#aaa;font-size:0.8em;">${defanged}</div>
+                        <div style="color:${color};font-size:0.8em;font-weight:700;margin-top:5px;">${label}</div>
+                    </div>`;
+                });
+                urlsHtml += '</div>';
+            }
+            document.getElementById('msgUrls').innerHTML = urlsHtml;
+            if(currentUser) {
+                await addDoc(collection(db, 'scans'), {
+                    uid: currentUser.uid,
+                    email: currentUser.email,
+                    url: null,
+                    type: 'message',
+                    result: data.is_scam ? 'PHISHING' : 'SAFE',
                     timestamp: new Date()
                 });
                 await loadUserStats();
@@ -303,6 +393,26 @@ def check():
         'malicious': malicious,
         'total': total,
         'google_flagged': google_flagged
+    })
+
+@app.route('/check-message', methods=['POST'])
+def check_message():
+    data = request.get_json()
+    message = data.get('message', '').lower()
+    found_keywords = [k for k in SCAM_KEYWORDS if k in message]
+    urls = extract_urls(data.get('message', ''))
+    url_results = []
+    for url in urls:
+        malicious, total = check_virustotal(url)
+        google_flagged = check_google_safe_browsing(url)
+        is_safe = malicious == 0 and not google_flagged
+        url_results.append({'url': url, 'safe': is_safe})
+    dangerous_urls = [u for u in url_results if not u['safe']]
+    is_scam = len(found_keywords) >= 2 or len(dangerous_urls) > 0
+    return jsonify({
+        'is_scam': is_scam,
+        'found_keywords': found_keywords,
+        'urls': url_results
     })
 
 if __name__ == '__main__':
