@@ -273,7 +273,7 @@ HTML += '''
         window.checkURL = async () => {
             const url = document.getElementById('url').value;
             if(!url) return;
-            const urlPattern = /^(https?:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w \.-]*)*\/?$/;
+            const urlPattern = new RegExp('^(https?:\\/\\/)?' + '([\\da-z\\.-]+)\\.([a-z\\.]{2,6})([\\w \\.-]*)*\\/?$');
             if(!urlPattern.test(url)) {
                 alert('Please enter a valid URL');
                 return;
@@ -449,4 +449,3 @@ def check_message():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
-    
