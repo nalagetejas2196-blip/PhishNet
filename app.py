@@ -3,11 +3,18 @@ import os
 import requests
 import base64
 import re
+import pickle
+import numpy as np
+from feature_extractor import extract_features
 
 app = Flask(__name__)
 
 VIRUSTOTAL_API_KEY = os.environ.get('VT_API_KEY', '')
 GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY', '')
+
+# Load trained ML model
+with open('model.pkl', 'rb') as f:
+    ml_model = pickle.load(f)
 
 SCAM_KEYWORDS = [
     'pay now', 'urgent', 'winner', 'won', 'prize', 'lottery', 'free money',
@@ -62,7 +69,16 @@ def check_google_safe_browsing(url):
     except:
         pass
     return False
-HTML = '''
+
+def check_ml_model(url):
+    try:
+        features = extract_features(url)
+        prediction = ml_model.predict([features])[0]
+        probability = ml_model.predict_proba([features])[0]
+        return int(prediction), float(probability[1])
+    except:
+        return 0, 0.0
+    HTML = '''
 <!DOCTYPE html>
 <html>
 <head>
@@ -102,6 +118,7 @@ HTML = '''
         .stat-number { font-size: 1.5em; font-weight: 800; color: #00ff88; }
         .stat-label { color: #666; font-size: 0.75em; }
         .google-flag { color: #ff4444; font-size: 0.85em; margin-top: 5px; }
+        .ml-score { color: #00aaff; font-size: 0.85em; margin-top: 5px; }
         .keyword-tag { display: inline-block; background: #ff444422; color: #ff4444; border: 1px solid #ff4444; border-radius: 20px; padding: 4px 12px; margin: 4px; font-size: 0.8em; }
         .url-result { background: #0d0d0d; border-radius: 8px; padding: 12px; margin: 8px 0; text-align: left; }
         .message-verdict { font-size: 1.5em; font-weight: 800; margin-bottom: 15px; }
@@ -141,7 +158,7 @@ HTML = '''
         <div id="url-section">
             <input class="input-box" type="text" id="url" placeholder="Paste any URL to check..." />
             <button class="btn" onclick="checkURL()">Check Now</button>
-            <div id="scanning" class="scanning" style="display:none">Scanning across 70+ security engines + Google Safe Browsing...</div>
+            <div id="scanning" class="scanning" style="display:none">Scanning across 70+ security engines + Google Safe Browsing + AI Model...</div>
             <div class="result-box" id="resultBox">
                 <div class="status" id="status"></div>
                 <div class="score-number" id="scoreNum"></div>
@@ -151,7 +168,8 @@ HTML = '''
                 </div>
                 <div class="engines" id="engines"></div>
                 <div class="google-flag" id="googleFlag"></div>
-                <div style="margin-top:10px;color:#333;font-size:0.75em;">Sources: VirusTotal + Google Safe Browsing</div>
+                <div class="ml-score" id="mlScore"></div>
+                <div style="margin-top:10px;color:#333;font-size:0.75em;">Sources: VirusTotal + Google Safe Browsing + Custom ML Model (96.94% accuracy)</div>
             </div>
         </div>
         <div id="message-section" style="display:none">
@@ -165,7 +183,7 @@ HTML = '''
             </div>
         </div>
         <div id="history" style="margin-top:30px;text-align:left;"></div>
-        <div class="powered">Powered by VirusTotal + Google Safe Browsing</div>
+        <div class="powered">Powered by VirusTotal + Google Safe Browsing + Custom AI Model</div>
     </div>
 '''
 HTML += '''
@@ -272,28 +290,36 @@ HTML += '''
             const scoreBar = document.getElementById('scoreBar');
             const engines = document.getElementById('engines');
             const googleFlag = document.getElementById('googleFlag');
+            const mlScore = document.getElementById('mlScore');
             scoreNum.textContent = score + '/100';
             scoreBar.style.width = score + '%';
             googleFlag.textContent = data.google_flagged ? 'Flagged by Google Safe Browsing' : '';
-            if(score === 0 && !data.google_flagged){
-                status.textContent = 'SAFE';
-                status.className = 'status safe';
-                scoreBar.style.background = '#00ff88';
-                scoreNum.className = 'score-number safe';
-            } else if(score <= 20 && !data.google_flagged){
+            mlScore.textContent = data.ml_prediction === 1 ? 'AI Model: Phishing detected (' + (data.ml_probability * 100).toFixed(1) + '% confidence)' : 'AI Model: Looks safe (' + ((1-data.ml_probability) * 100).toFixed(1) + '% confidence)';
+
+            const isPhishing = score > 20 || data.google_flagged || data.ml_prediction === 1;
+            const isSuspicious = score > 0 && score <= 20;
+
+            if(isPhishing){
+                status.textContent = 'PHISHING DETECTED';
+                status.className = 'status danger';
+                scoreBar.style.background = '#ff4444';
+                scoreNum.className = 'score-number danger';
+            } else if(isSuspicious){
                 status.textContent = 'SUSPICIOUS';
                 status.className = 'status suspicious';
                 scoreBar.style.background = '#ffaa00';
                 scoreNum.className = 'score-number suspicious';
             } else {
-                status.textContent = 'PHISHING DETECTED';
-                status.className = 'status danger';
-                scoreBar.style.background = '#ff4444';
-                scoreNum.className = 'score-number danger';
+                status.textContent = 'SAFE';
+                status.className = 'status safe';
+                scoreBar.style.background = '#00ff88';
+                scoreNum.className = 'score-number safe';
             }
+
             engines.innerHTML = data.total + ' security engines scanned &bull; ' + data.malicious + ' flagged this URL';
+
             if(currentUser) {
-                const result = (score === 0 && !data.google_flagged) ? 'SAFE' : (score <= 20 && !data.google_flagged) ? 'SUSPICIOUS' : 'PHISHING';
+                const result = isPhishing ? 'PHISHING' : isSuspicious ? 'SUSPICIOUS' : 'SAFE';
                 await addDoc(collection(db, 'scans'), {
                     uid: currentUser.uid,
                     email: currentUser.email,
@@ -301,6 +327,7 @@ HTML += '''
                     result: result,
                     score: score,
                     google_flagged: data.google_flagged,
+                    ml_prediction: data.ml_prediction,
                     malicious: data.malicious,
                     total: data.total,
                     timestamp: new Date()
@@ -382,9 +409,10 @@ def check():
     url = request.args.get('url', '')
     malicious, total = check_virustotal(url)
     google_flagged = check_google_safe_browsing(url)
-    if malicious == 0 and not google_flagged:
+    ml_prediction, ml_probability = check_ml_model(url)
+    if malicious == 0 and not google_flagged and ml_prediction == 0:
         result = 'SAFE'
-    elif malicious <= 2 and not google_flagged:
+    elif malicious <= 2 and not google_flagged and ml_prediction == 0:
         result = 'SUSPICIOUS'
     else:
         result = 'PHISHING'
@@ -392,7 +420,9 @@ def check():
         'result': result,
         'malicious': malicious,
         'total': total,
-        'google_flagged': google_flagged
+        'google_flagged': google_flagged,
+        'ml_prediction': ml_prediction,
+        'ml_probability': ml_probability
     })
 
 @app.route('/check-message', methods=['POST'])
@@ -405,7 +435,8 @@ def check_message():
     for url in urls:
         malicious, total = check_virustotal(url)
         google_flagged = check_google_safe_browsing(url)
-        is_safe = malicious == 0 and not google_flagged
+        ml_prediction, _ = check_ml_model(url)
+        is_safe = malicious == 0 and not google_flagged and ml_prediction == 0
         url_results.append({'url': url, 'safe': is_safe})
     dangerous_urls = [u for u in url_results if not u['safe']]
     is_scam = len(found_keywords) >= 2 or len(dangerous_urls) > 0
@@ -418,3 +449,4 @@ def check_message():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
+    
